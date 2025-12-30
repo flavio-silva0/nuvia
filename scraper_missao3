@@ -1,0 +1,122 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import time
+import random
+import logging
+
+# --- CONFIGURAÇÃO ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+class GoogleNewsRSSScraper:
+    def __init__(self):
+        # User-Agents ainda são importantes
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/78.0'
+        ]
+
+    def get_headers(self):
+        return {'User-Agent': random.choice(self.user_agents)}
+
+    def fetch_feed(self, query):
+        """
+        Acessa o FEED RSS oculto do Google News.
+        URL: https://news.google.com/rss/search?q={QUERY}
+        """
+        # Formata a URL para buscar notícias do Brasil (hl=pt-BR, gl=BR)
+        # q = Query da empresa + termos de investimento
+        base_url = "https://news.google.com/rss/search"
+        params = {
+            'q': f"{query} after:2023-01-01", # Filtra notícias recentes
+            'hl': 'pt-BR',
+            'gl': 'BR',
+            'ceid': 'BR:pt-419'
+        }
+        
+        try:
+            # Delay aleatório (Jitter)
+            time.sleep(random.uniform(1, 3))
+            
+            response = requests.get(base_url, params=params, headers=self.get_headers(), timeout=10)
+            
+            if response.status_code == 200:
+                return response.content
+            else:
+                logging.error(f"Erro HTTP {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logging.error(f"Erro de conexão: {e}")
+            return None
+
+    def parse_xml(self, xml_content, company_name):
+        """
+        Parser de XML é muito mais robusto que HTML.
+        Não depende de classes CSS que mudam (ex: .BNeawe).
+        """
+        if not xml_content: return []
+        
+        # Usa o parser 'xml' do BeautifulSoup
+        soup = BeautifulSoup(xml_content, features='xml')
+        items = soup.find_all('item')
+        
+        news_list = []
+        for item in items[:5]: # Top 5 notícias
+            try:
+                title = item.title.text
+                link = item.link.text
+                pub_date = item.pubDate.text
+                
+                # Filtro simples: Se o título tem a ver com dinheiro/negócio
+                news_list.append({
+                    'Empresa': company_name,
+                    'Título da Notícia': title,
+                    'Data': pub_date,
+                    'Link': link,
+                    'Fonte': 'Google News RSS'
+                })
+            except:
+                continue
+                
+        return news_list
+
+# --- EXECUÇÃO ---
+
+def main():
+    print(">>> INICIANDO SCRAPER DE SINAIS DE INTENÇÃO (VIA RSS) <<<\n")
+    
+    empresas = ['Magazine Luiza', 'Stone Pagamentos', 'Growth Suplementos', 'Nubank']
+    scraper = GoogleNewsRSSScraper()
+    dataset = []
+
+    for empresa in empresas:
+        logging.info(f"Buscando sinais para: {empresa}...")
+        
+        # Query focada: Nome da empresa + palavras-chave de intenção
+        query = f"{empresa} (investimento OR aquisição OR lucro OR contrata)"
+        
+        xml_data = scraper.fetch_feed(query)
+        
+        if xml_data:
+            dados = scraper.parse_xml(xml_data, empresa)
+            if dados:
+                dataset.extend(dados)
+                logging.info(f" -> {len(dados)} notícias encontradas.")
+            else:
+                logging.warning(" -> Feed acessado, mas sem notícias recentes.")
+        else:
+            logging.error(" -> Falha ao acessar o feed.")
+
+    # Output
+    print("\n" + "="*50)
+    if dataset:
+        df = pd.DataFrame(dataset)
+        print(df[['Empresa', 'Título da Notícia', 'Data']].head())
+        df.to_csv('sinais_intencao_rss.csv', index=False)
+        print(f"\nArquivo 'sinais_intencao_rss.csv' salvo com sucesso!")
+    else:
+        print("Nenhum dado capturado. O IP pode estar totalmente bloqueado.")
+
+if __name__ == "__main__":
+    main()
