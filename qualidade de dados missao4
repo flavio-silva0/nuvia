@@ -1,0 +1,44 @@
+import pandas as pd
+import re
+
+# 1. Carregar Dados Sujos
+df = pd.read_csv('base_suja_1000.csv')
+
+# --- TÉCNICA 1: NORMALIZAÇÃO DE CNPJ ---
+def clean_cnpj(cnpj):
+    if pd.isna(cnpj): return None
+    # Remove tudo que não é dígito
+    clean = re.sub(r'\D', '', str(cnpj))
+    # Padroniza com 14 dígitos (zeros à esquerda)
+    return clean.zfill(14)
+
+df['cnpj_clean'] = df['cnpj_raw'].apply(clean_cnpj)
+
+# --- TÉCNICA 2: DEDUPLICAÇÃO INTELIGENTE ---
+# Remove duplicatas exatas de CNPJ, mantendo o último registro (geralmente o mais novo)
+df = df.drop_duplicates(subset=['cnpj_clean'], keep='last')
+
+# --- TÉCNICA 3: VALIDAÇÃO DE EMAIL (Regex Simples) ---
+def is_valid_email(email):
+    pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
+    if pd.isna(email): return False
+    return bool(re.match(pattern, str(email)))
+
+# Cria flag de validade
+df['email_valid'] = df['email_contato'].apply(is_valid_email)
+
+# --- TÉCNICA 4: PADRONIZAÇÃO DE SETOR (De-Para) ---
+sector_map = {
+    'Retail': 'Varejo',
+    'Comércio': 'Varejo',
+    'Fintech': 'Tecnologia',
+    'SaaS': 'Tecnologia',
+    'IT Services': 'Tecnologia'
+}
+df['setor_padrao'] = df['setor_raw'].map(sector_map).fillna('Outros')
+
+# --- OUTPUT: DADOS LIMPOS ---
+# Filtra apenas leads com emails válidos e CNPJ preenchido
+df_final = df[ (df['email_valid'] == True) & (df['cnpj_clean'].notnull()) ]
+
+print(f"Base Original: {len(df)} -> Base Limpa: {len(df_final)}")
