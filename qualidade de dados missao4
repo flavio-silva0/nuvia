@@ -1,44 +1,90 @@
 import pandas as pd
 import re
+import numpy as np
 
-# 1. Carregar Dados Sujos
-df = pd.read_csv('base_suja_1000.csv')
+# --- 1. GERANDO DADOS SUJOS (Simulação) ---
+# Criamos um DataFrame na memória para você não precisar baixar arquivos
+data = {
+    'id': range(1, 11),
+    'empresa': [
+        'Magazine Luiza', 'MAGAZINE LUIZA S/A', 'Magalu', # Duplicatas
+        'Stone Pagamentos', 'Stone', 
+        'Padaria do Zé', 'Empresa Invalida',
+        'Tech Solutions', 'Financya Flow', 'Loja Sem Contato'
+    ],
+    'cnpj_raw': [
+        '47.960.950/0001-21', '47960950000121', '47.960.950/0001-21', # Mesmos CNPJs
+        '16.501.555/0001-57', None, 
+        '123', '00.000.000/0000-00', 
+        '99.999.999/0001-99', '11.111.111/0001-11', None
+    ],
+    'email_contato': [
+        'contato@magalu.com', 'financeiro@magazineluiza.com.br', None,
+        'cfo@stone.com.br', 'pedro.stone@gmail.com',
+        'ze@bol.com.br', 'email_errado_sem_arroba',
+        'contato@tech.io', 'admin@financya.com', None
+    ],
+    'setor_raw': [
+        'Retail', 'Varejo', 'Comércio',
+        'Fintech', 'Finance',
+        'Alimentos', 'Outros',
+        'SaaS', 'Tecnologia', 'Varejo'
+    ]
+}
 
-# --- TÉCNICA 1: NORMALIZAÇÃO DE CNPJ ---
+df = pd.DataFrame(data)
+
+print(">>> BASE SUJA (Amostra):")
+print(df[['empresa', 'cnpj_raw', 'email_contato']].head(5))
+print("-" * 50)
+
+# --- 2. PIPELINE DE LIMPEZA E NORMALIZAÇÃO ---
+
+# A. Normalização de CNPJ (Remove pontuação e garante 14 dígitos)
 def clean_cnpj(cnpj):
     if pd.isna(cnpj): return None
-    # Remove tudo que não é dígito
+    # Remove tudo que não é número
     clean = re.sub(r'\D', '', str(cnpj))
-    # Padroniza com 14 dígitos (zeros à esquerda)
-    return clean.zfill(14)
+    # Validação simples: CNPJ tem que ter 14 dígitos (senão é lixo)
+    if len(clean) != 14: return None
+    return clean
 
 df['cnpj_clean'] = df['cnpj_raw'].apply(clean_cnpj)
 
-# --- TÉCNICA 2: DEDUPLICAÇÃO INTELIGENTE ---
-# Remove duplicatas exatas de CNPJ, mantendo o último registro (geralmente o mais novo)
-df = df.drop_duplicates(subset=['cnpj_clean'], keep='last')
+# B. Deduplicação Inteligente (Prioridade para quem tem CNPJ)
+# Primeiro ordenamos para que registros mais completos fiquem por cima (opcional)
+# Depois removemos duplicatas de CNPJ, mantendo o primeiro
+df_dedup = df.dropna(subset=['cnpj_clean']).drop_duplicates(subset=['cnpj_clean'], keep='first')
 
-# --- TÉCNICA 3: VALIDAÇÃO DE EMAIL (Regex Simples) ---
+# C. Validação de Email (Regex)
 def is_valid_email(email):
+    # Regex padrão para validar formato de email
     pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
     if pd.isna(email): return False
     return bool(re.match(pattern, str(email)))
 
-# Cria flag de validade
-df['email_valid'] = df['email_contato'].apply(is_valid_email)
+df_dedup = df_dedup.copy() # Evita warning do Pandas
+df_dedup['email_valid'] = df_dedup['email_contato'].apply(is_valid_email)
 
-# --- TÉCNICA 4: PADRONIZAÇÃO DE SETOR (De-Para) ---
+# D. Padronização de Setor (De-Para)
 sector_map = {
     'Retail': 'Varejo',
     'Comércio': 'Varejo',
-    'Fintech': 'Tecnologia',
-    'SaaS': 'Tecnologia',
-    'IT Services': 'Tecnologia'
+    'Finance': 'Financeiro',
+    'Fintech': 'Financeiro',
+    'SaaS': 'Tecnologia'
 }
-df['setor_padrao'] = df['setor_raw'].map(sector_map).fillna('Outros')
+# Se não estiver no mapa, mantém o original ou usa 'Outros'
+df_dedup['setor_padrao'] = df_dedup['setor_raw'].map(sector_map).fillna(df_dedup['setor_raw'])
 
-# --- OUTPUT: DADOS LIMPOS ---
-# Filtra apenas leads com emails válidos e CNPJ preenchido
-df_final = df[ (df['email_valid'] == True) & (df['cnpj_clean'].notnull()) ]
+# --- 3. OUTPUT FINAL (Qualidade) ---
 
-print(f"Base Original: {len(df)} -> Base Limpa: {len(df_final)}")
+# Regra de Ouro: Só queremos leads com CNPJ válido E Email válido
+df_final = df_dedup[df_dedup['email_valid'] == True]
+
+print("\n>>> RELATÓRIO DE QUALIDADE:")
+print(f"Registros Iniciais: {len(df)}")
+print(f"Registros Únicos (CNPJ): {len(df_dedup)}")
+print(f"Registros Finais (Válidos): {len(df_final)}")
+print("\n>>> BASE LIMPA FINAL:")
+print(df_final[['empresa', 'cnpj_clean', 'setor_padrao', 'email_contato']])
